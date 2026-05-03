@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Resume Checker</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="container">
+    <h1>AI Resume Checker</h1>
+
+    <form id="form">
+        <label for="resume">Upload Resume (PDF)</label>
+        <input type="file" id="resume" name="resume" required>
+
+        <label for="job_description">Job Description</label>
+        <textarea id="job_description" name="job_description" rows="8" required></textarea>
+        <button class="btn" type="submit">Analyze</button>
+    </form>
+
+    <div id="result"></div>
+</div>
+
+<script>
+document.getElementById("form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const formData = new FormData(e.target);
+    const res = await fetch("/check_resume", { method: "POST", body: formData, cache: "no-cache" });
+    const data = await res.json();
+
+    document.getElementById("result").innerHTML = `
+        <h2>Match Score: ${data.match_score}%</h2>
+        <p><b>Feedback:</b> ${data.feedback}</p>
+        <h3>Missing Skills</h3>
+        <ul>${data.missing_skills.map(s => `<li>${s}</li>`).join("")}</ul>
+    `;
+});
+</script>
+
+</body>
+</html>
+

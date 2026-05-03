@@ -1,0 +1,42 @@
+Sample Resume – Data Analyst Intern
+
+Name: Alex Kumar
+Role: Data Analyst Intern
+
+Skills
+
+Python
+
+SQL
+
+Pandas
+
+NumPy
+
+Data Analysis
+
+Exploratory Data Analysis (EDA)
+
+Matplotlib
+
+Seaborn
+
+Git
+
+Jupyter Notebook
+
+Experience
+
+Data Analyst Intern
+
+Analyzed structured datasets using Python and SQL
+
+Performed EDA using Pandas, NumPy, Matplotlib, and Seaborn
+
+Created data visualizations for business insights
+
+Cleaned and preprocessed datasets for analysis
+
+Education
+
+B.Tech in Information Technology
