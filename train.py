@@ -149,13 +149,10 @@ def load_data() -> tuple[list[str], list[int]]:
         "fullstack": {"react", "fastapi", "postgresql", "deployment", "github"},
         "ai eng": {"llm", "langchain", "rag", "groq", "prompt engineering", "agents"},
     }
-
     def extract_skills(text, skill_set):
         return {s for s in skill_set if s in text.lower()}
-
     X, y = [], []
     jd_skill_keys = list(skill_groups.keys())
-
     for i, jd in enumerate(jds):
         jd_skill_key = jd_skill_keys[i]
         jd_skills = skill_groups[jd_skill_key]
@@ -198,62 +195,38 @@ def load_data() -> tuple[list[str], list[int]]:
 # "Stratified" means each fold has the same class ratio.
 
 def build_pipelines() -> dict:
-    """
-    Returns a dict of named sklearn Pipelines.
-    Each pipeline = TF-IDF vectoriser + a classifier.
-    WHY Pipeline: saves vectoriser + model as one object.
-    Prevents the mistake of forgetting to transform new data.
-    """
-
-    # Shared vectoriser config — WHY THESE SETTINGS:
-    # max_features=5000: top 5000 words by corpus frequency
-    # ngram_range=(1,2): also capture bigrams like "machine learning"
-    # stop_words='english': removes "the","a","is" automatically
-    # sublinear_tf=True: applies log(1+tf) instead of raw tf
-    #   WHY: prevents very frequent words from dominating
-    #   A word appearing 100x vs 10x shouldn't be 10x as important
+    # 🛠️ CHANGED: max_features reduced to 100. min_df=2 added to drop rare words.
     tfidf_config = dict(
-        max_features=5000,
+        max_features=100,  
+        min_df=2,          
         ngram_range=(1, 2),
         stop_words="english",
-        sublinear_tf=True,       # log normalisation on TF
+        sublinear_tf=True, 
     )
 
     return {
-        # LOGISTIC REGRESSION
-        # WHY: Fast, interpretable, good baseline for text.
-        # C=1.0 is regularisation strength (inverse).
-        # Higher C = less regularisation = model fits training
-        # data more closely (risk of overfitting).
-        # max_iter=1000: gradient descent runs up to 1000 steps.
         "logistic_regression": Pipeline([
             ("tfidf", TfidfVectorizer(**tfidf_config)),
-            ("clf",   LogisticRegression(C=1.0, max_iter=1000,
-                                         class_weight="balanced", random_state=42))
+            ("clf",   LogisticRegression(C=0.1, class_weight="balanced", random_state=42))
         ]),
 
-        # RANDOM FOREST
-        # WHY: Ensemble of 200 decision trees. Each tree learns
-        # different patterns. Final prediction = majority vote.
-        # Handles non-linear relationships TF-IDF + LR can miss.
-        # class_weight="balanced": compensates for class imbalance.
         "random_forest": Pipeline([
             ("tfidf", TfidfVectorizer(**tfidf_config)),
-            ("clf",   RandomForestClassifier(n_estimators=200,
-                                              random_state=42,
-                                              class_weight="balanced"))
+            # 🛠️ CHANGED: max_depth=3 and min_samples_leaf=5 to stop 100% memorization
+            ("clf",   RandomForestClassifier(n_estimators=100,
+                                             random_state=42,
+                                             max_depth=3,
+                                             min_samples_leaf=5,
+                                             class_weight="balanced"))
         ]),
 
-        # GRADIENT BOOSTING
-        # WHY: Builds trees sequentially. Each tree corrects errors
-        # of the previous one. Often best on sparse text features.
-        # learning_rate=0.1: how much each tree corrects errors.
-        # n_estimators=100: number of correction rounds.
         "gradient_boosting": Pipeline([
             ("tfidf", TfidfVectorizer(**tfidf_config)),
+            # 🛠️ CHANGED: max_depth=2 to force broad learning
             ("clf",   GradientBoostingClassifier(n_estimators=100,
-                                                  learning_rate=0.1,
-                                                  random_state=42))
+                                                 learning_rate=0.05,
+                                                 max_depth=2,
+                                                 random_state=42))
         ]),
     }
 
@@ -324,28 +297,42 @@ def train():
     # Step 1: load data
     X, y = load_data()
 
+    # 🛠️ NEW: MANUALLY BALANCE CLASSES VIA OVERSAMPLING
+    X = np.array(X)
+    y = np.array(y)
+    
+    pos_idx = np.where(y == 1)[0]
+    neg_idx = np.where(y == 0)[0]
+    
+    # Duplicate the positive samples to match the number of negative samples
+    oversampled_pos_idx = np.random.choice(pos_idx, size=len(neg_idx), replace=True)
+    
+    # Combine back together
+    balanced_idx = np.concatenate([neg_idx, oversampled_pos_idx])
+    X_balanced = X[balanced_idx].tolist()
+    y_balanced = y[balanced_idx].tolist()
+    
+    print(f"Balanced Dataset: {len(X_balanced)} samples | "
+          f"Positive: {sum(y_balanced)} | Negative: {len(y_balanced)-sum(y_balanced)}")
+
     # Step 2: build all candidate pipelines
     pipelines = build_pipelines()
 
-    # Step 3: evaluate all pipelines with cross-validation
+    # Step 3: evaluate all pipelines with cross-validation using the balanced dataset
     print("\nCross-validation results (5-fold StratifiedKFold):")
     print("-" * 65)
-    results = evaluate_models(pipelines, X, y)
+    results = evaluate_models(pipelines, X_balanced, y_balanced)
 
     # Step 4: pick the best model by F1 score
-    # WHY F1 and not accuracy: see comments in evaluate_models()
     best_name = max(results, key=lambda k: results[k]["f1"])
     best_pipeline = pipelines[best_name]
     print(f"\nBest model: {best_name} (F1={results[best_name]['f1']:.3f})")
 
-    # Step 5: retrain best model on ALL data
-    # WHY: cross-validation used folds for evaluation.
-    # Now we train on everything to maximise learning before saving.
-    best_pipeline.fit(X, y)
+    # Step 5: retrain best model on ALL balanced data
+    best_pipeline.fit(X_balanced, y_balanced)
 
     # Step 6: save pipeline + evaluation report
     os.makedirs("models", exist_ok=True)
-# Your existing save line:
     joblib.dump(best_pipeline, "models/resume_match_model.pkl")
     with open("models/eval_report.json", "w") as f:
         json.dump({"best_model": best_name, "results": results}, f, indent=2)

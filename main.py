@@ -15,6 +15,7 @@ WHAT THIS FILE TEACHES YOU (Module 5 — Backend Engineering):
 import os
 import re
 import shutil
+import json
 import joblib
 import pandas as pd
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
@@ -286,30 +287,6 @@ async def check_resume(
     resume: UploadFile = File(...),
     job_description: str = Form(...)
 ):
-    try:
-        # Reset the pointer to the beginning of the file in case it was already read
-        await resume.seek(0)
-        
-        # Read the contents into memory
-        contents = await resume.read()
-        
-        # VERY IMPORTANT: If you are about to use the file again, seek back to 0
-        await resume.seek(0)
-
-        # Process the contents with PyPDF2
-        # (Pass a BytesIO stream of contents or handle it directly)
-        import io
-        pdf_file = io.BytesIO(contents)
-        reader = PdfReader(pdf_file)
-        
-        resume_text = ""
-        for page in reader.pages:
-            text = page.extract_text()
-            if text:
-                resume_text += text + " "
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
     """
     Score a resume against a job description.
 
@@ -325,11 +302,7 @@ async def check_resume(
       - model_used: which classifier was selected at training
     """
 
-    # ── Input validation ──────────────────────────────────
-    # WHY VALIDATE FILE TYPE:
-    # Without this, anyone can upload a .exe, .js, or .py file.
-    # You save it to disk and try to "extract text" from it.
-    # This is a security vulnerability — arbitrary file write.
+    # ── 1. INPUT VALIDATION ──────────────────────────────────
     if not resume.filename.lower().endswith(".pdf"):
         raise HTTPException(
             status_code=400,
@@ -348,39 +321,35 @@ async def check_resume(
             detail="Job description too long (max 10,000 characters)"
         )
 
-    # ── Save PDF temporarily ──────────────────────────────
-    # WHY TEMP FILE:
-    # UploadFile is a streaming object — you can't seek backwards.
-    # PdfReader needs a file path or seekable stream.
-    # We save it temporarily, read it, then delete it.
-    #
-    # WHY TRY/FINALLY:
-    # If extract_text_from_pdf() raises an exception, the code
-    # after it never runs — os.remove() is skipped.
-    # The temp file stays on disk forever. Disk fills up. Server dies.
-    # try/finally GUARANTEES cleanup even when exceptions occur.
-
+    # ── 2. SAVE PDF TEMPORARILY & EXTRACT TEXT ────────────────
     temp_path = f"temp_{resume.filename}"
 
     try:
+        # Stream the file content directly to your disk
         with open(temp_path, "wb") as f:
             shutil.copyfileobj(resume.file, f)
 
+        # Call your utility function to extract text safely
         resume_text = extract_text_from_pdf(temp_path)
 
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing upload: {str(e)}"
+        )
     finally:
-        # This runs whether extract succeeded or raised an error
+        # This GUARANTEES the temp file is deleted from disk even if the extraction crashes
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
-    # ── Validate extracted text ───────────────────────────
+    # ── 3. VALIDATE EXTRACTED TEXT ───────────────────────────
     if not resume_text.strip():
         raise HTTPException(
             status_code=422,
             detail="Could not extract text from PDF. Is it a scanned image?"
         )
 
-    # ── Score and analyse ─────────────────────────────────
+    # ── 4. SCORE AND ANALYZE ─────────────────────────────────
     jd_text = clean_text(job_description)
 
     score = ml_match_score(resume_text, jd_text)
@@ -394,7 +363,6 @@ async def check_resume(
     # Get model name from eval report if available
     model_name = "unknown"
     try:
-        import json
         with open("models/eval_report.json") as f:
             report = json.load(f)
             model_name = report.get("best_model", "unknown")
@@ -408,7 +376,6 @@ async def check_resume(
         missing_skills=missing,
         model_used=model_name
     )
-
 
 # ──────────────────────────────────────────────
 # ENTRYPOINT
